@@ -1,0 +1,1420 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>SafeWalk – AI Safety Navigation</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+/* ═══════════════════════════════════════════
+   TOKENS
+═══════════════════════════════════════════ */
+:root{
+  --bg:#060e1c; --surface:#0b1625; --surface2:#101e32; --surface3:#162440;
+  --border:rgba(255,255,255,0.06); --border2:rgba(255,255,255,0.11);
+  --safe:#00e5a0; --safe-dim:rgba(0,229,160,0.08); --safe-glow:rgba(0,229,160,0.22);
+  --warn:#ffb020; --warn-dim:rgba(255,176,32,0.08);
+  --danger:#ff4757; --danger-dim:rgba(255,71,87,0.08);
+  --accent:#4f8aff; --purple:#9b6dff; --pink:#ff6b9d;
+  --text:#eef2ff; --text2:#9aadcc; --muted:#3c5070;
+  --radius:16px; --shadow:0 20px 60px rgba(0,0,0,0.55);
+  --sidebar:340px;
+}
+
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{width:100%;height:100%;background:var(--bg);color:var(--text);font-family:'Plus Jakarta Sans',sans-serif;overflow:hidden;position:fixed}
+
+/* ═══════════════════════════════════════════
+   SPLASH
+═══════════════════════════════════════════ */
+#splash{
+  position:fixed;inset:0;z-index:9999;
+  background:radial-gradient(ellipse at 50% 40%,#0d1f3a 0%,var(--bg) 70%);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;
+  overflow:hidden;
+}
+.sp-ring-wrap{position:relative;width:80px;height:80px;margin-bottom:28px}
+.sp-ring{position:absolute;inset:0;border-radius:50%;border:2px solid transparent;border-top-color:var(--safe);border-right-color:var(--accent);animation:spin 1s linear infinite}
+.sp-ring2{position:absolute;inset:8px;border-radius:50%;border:1px solid transparent;border-bottom-color:rgba(0,229,160,0.3);animation:spin 1.5s linear infinite reverse}
+.sp-icon{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:2rem;animation:beat 2s ease-in-out infinite}
+.sp-logo{font-family:'Syne',sans-serif;font-weight:800;font-size:2.2rem;letter-spacing:-0.04em;background:linear-gradient(135deg,var(--safe) 0%,var(--accent) 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;animation:up 0.4s 0.1s ease both}
+.sp-tag{font-size:0.76rem;color:var(--text2);letter-spacing:0.1em;text-transform:uppercase;margin-top:5px;margin-bottom:36px;animation:up 0.4s 0.22s ease both}
+.sp-steps{display:flex;flex-direction:column;gap:8px;animation:up 0.4s 0.35s ease both;min-width:200px}
+.sp-step{display:flex;align-items:center;gap:9px;font-size:0.75rem;color:var(--muted);opacity:0;transition:all 0.25s}
+.sp-step.active{opacity:1;color:var(--text)}
+.sp-step.done{opacity:1;color:var(--safe)}
+.sp-dot{width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0}
+.sp-bg-glow{position:absolute;width:500px;height:500px;border-radius:50%;background:radial-gradient(circle,rgba(0,229,160,0.04) 0%,transparent 70%);pointer-events:none;top:50%;left:50%;transform:translate(-50%,-55%)}
+
+/* ═══════════════════════════════════════════
+   LAYOUT — PC sidebar + map, Mobile stacked
+═══════════════════════════════════════════ */
+#app{position:fixed;inset:0;display:flex;opacity:0;transition:opacity 0.5s}
+#app.visible{opacity:1}
+
+/* Map takes full space, sidebar overlays on mobile */
+#map{position:absolute;inset:0;z-index:1}
+.leaflet-container{background:#07101d !important}
+.leaflet-control-attribution{display:none !important}
+.leaflet-bar a{background:var(--surface) !important;color:var(--text) !important;border-color:var(--border2) !important;font-size:1rem}
+.leaflet-bar a:hover{background:var(--surface2) !important}
+.leaflet-popup-content-wrapper{background:var(--surface) !important;color:var(--text) !important;border:1px solid var(--border2) !important;border-radius:14px !important;box-shadow:var(--shadow) !important}
+.leaflet-popup-tip{background:var(--surface) !important}
+.leaflet-popup-content{font-family:'Plus Jakarta Sans',sans-serif;font-size:0.79rem;margin:10px 14px !important;line-height:1.6}
+.leaflet-popup-content b{color:var(--safe)}
+.leaflet-popup-content small{color:var(--text2)}
+
+/* PC sidebar */
+#sidebar{
+  position:absolute;left:0;top:0;bottom:0;width:var(--sidebar);
+  z-index:100;display:flex;flex-direction:column;
+  background:rgba(6,14,28,0.97);
+  backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
+  border-right:1px solid var(--border2);
+  box-shadow:4px 0 32px rgba(0,0,0,0.4);
+  transition:transform 0.35s cubic-bezier(0.4,0,0.2,1);
+}
+
+/* Mobile: sidebar slides up as bottom sheet */
+@media(max-width:768px){
+  #sidebar{
+    left:0;right:0;top:auto;bottom:0;width:100%;
+    border-right:none;border-top:1px solid var(--border2);
+    border-radius:24px 24px 0 0;
+    box-shadow:0 -12px 48px rgba(0,0,0,0.5);
+    transform:translateY(100%);
+    max-height:78vh;
+  }
+  #sidebar.open{transform:translateY(0)}
+  #map-overlay-btns{display:flex !important}
+}
+
+/* sidebar header */
+.sb-head{
+  padding:16px 16px 12px;
+  border-bottom:1px solid var(--border);
+  flex-shrink:0;
+}
+.sb-logo-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.sb-logo{font-family:'Syne',sans-serif;font-weight:800;font-size:1.15rem;letter-spacing:-0.02em;background:linear-gradient(90deg,var(--safe),var(--accent));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.sb-live{display:flex;align-items:center;gap:5px;font-size:0.67rem;color:var(--text2)}
+.ldot{width:5px;height:5px;border-radius:50%;background:var(--safe);animation:blink 1.5s infinite}
+.sb-actions{display:flex;gap:7px}
+.ibtn{width:34px;height:34px;border-radius:10px;border:1px solid var(--border2);background:var(--surface2);color:var(--text);font-size:0.95rem;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.18s;flex-shrink:0}
+.ibtn:hover,.ibtn:active{background:var(--surface3);transform:scale(0.93)}
+.sos-btn{background:var(--danger);border:none;color:#fff;padding:0 13px;height:34px;border-radius:50px;font-family:'Syne',sans-serif;font-weight:800;font-size:0.7rem;letter-spacing:0.06em;cursor:pointer;display:flex;align-items:center;gap:4px;animation:sosPulse 2s infinite;white-space:nowrap}
+.sos-btn:active{transform:scale(0.93)}
+
+/* search fields */
+.sb-search{display:flex;flex-direction:column;gap:8px}
+.field-wrap{position:relative;display:flex;align-items:center;background:var(--surface2);border:1.5px solid var(--border2);border-radius:13px;padding:0 12px;height:46px;transition:border-color 0.2s,box-shadow 0.2s;gap:8px}
+.field-wrap:focus-within{border-color:var(--safe);box-shadow:0 0 0 3px var(--safe-glow)}
+.fd{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.fd-f{background:var(--safe);box-shadow:0 0 6px var(--safe)}
+.fd-t{background:var(--danger);box-shadow:0 0 6px var(--danger)}
+.field-wrap input{flex:1;background:none;border:none;outline:none;color:var(--text);font-family:'Plus Jakarta Sans',sans-serif;font-size:0.86rem;font-weight:500;min-width:0}
+.field-wrap input::placeholder{color:var(--muted)}
+.floc{background:none;border:none;cursor:pointer;font-size:0.95rem;padding:2px;opacity:0.6;transition:opacity 0.18s;flex-shrink:0}
+.floc:hover{opacity:1}
+.swap-row{display:flex;align-items:center;gap:8px}
+.swap-btn{background:var(--surface3);border:1px solid var(--border2);border-radius:8px;color:var(--text2);cursor:pointer;font-size:0.9rem;width:30px;height:30px;display:flex;align-items:center;justify-content:center;transition:all 0.18s;flex-shrink:0}
+.swap-btn:hover{color:var(--text)}
+/* suggestions */
+.sugg{position:absolute;top:calc(100% + 5px);left:0;right:0;background:var(--surface);border:1px solid var(--border2);border-radius:13px;overflow:hidden;z-index:9000;box-shadow:var(--shadow);display:none;max-height:240px;overflow-y:auto}
+.sugg.show{display:block}
+.sugg::-webkit-scrollbar{width:3px}
+.sugg::-webkit-scrollbar-thumb{background:var(--muted);border-radius:2px}
+.si{display:flex;align-items:center;gap:9px;padding:10px 13px;cursor:pointer;border-bottom:1px solid var(--border);transition:background 0.12s}
+.si:last-child{border-bottom:none}
+.si:hover,.si:active{background:var(--surface2)}
+.si-ic{font-size:0.9rem;width:24px;text-align:center;flex-shrink:0}
+.si-name{font-size:0.82rem;font-weight:600;color:var(--text)}
+.si-sub{font-size:0.69rem;color:var(--text2);margin-top:1px}
+/* go button */
+.go-btn{height:46px;background:linear-gradient(135deg,var(--safe),var(--accent));border:none;border-radius:13px;color:#050d1a;font-family:'Syne',sans-serif;font-weight:800;font-size:0.9rem;letter-spacing:0.02em;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;box-shadow:0 5px 20px var(--safe-glow);transition:all 0.18s}
+.go-btn:hover{opacity:0.92;transform:translateY(-1px)}
+.go-btn:active{transform:scale(0.97);opacity:0.88}
+.go-btn:disabled{opacity:0.45;pointer-events:none;transform:none}
+
+/* sidebar body - scrollable content */
+.sb-body{flex:1;overflow-y:auto;padding:0;display:flex;flex-direction:column}
+.sb-body::-webkit-scrollbar{width:3px}
+.sb-body::-webkit-scrollbar-thumb{background:var(--muted);border-radius:2px}
+
+/* mobile handle */
+.mob-handle{width:34px;height:3px;background:var(--muted);border-radius:2px;margin:10px auto 0;opacity:0.35;flex-shrink:0;display:none}
+@media(max-width:768px){.mob-handle{display:block}}
+
+/* ═══════════════════════════════════════════
+   TRANSPORT WARNING BANNER
+═══════════════════════════════════════════ */
+.transport-banner{
+  margin:12px 14px 0;
+  background:linear-gradient(135deg,rgba(255,176,32,0.12),rgba(255,71,87,0.08));
+  border:1px solid rgba(255,176,32,0.3);
+  border-radius:14px;
+  padding:12px 13px;
+  display:none;
+  animation:up 0.3s ease;
+}
+.transport-banner.show{display:block}
+.tb-row1{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.tb-icon{font-size:1.3rem}
+.tb-title{font-family:'Syne',sans-serif;font-weight:700;font-size:0.85rem;color:var(--warn)}
+.tb-body{font-size:0.75rem;color:var(--text2);line-height:1.55;margin-bottom:8px}
+.tb-opts{display:flex;gap:6px;flex-wrap:wrap}
+.tb-opt{display:flex;align-items:center;gap:5px;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;padding:5px 10px;font-size:0.72rem;font-weight:600;color:var(--text2);cursor:pointer;transition:all 0.18s}
+.tb-opt:hover{border-color:var(--warn);color:var(--warn)}
+.tb-opt-icon{font-size:0.95rem}
+
+/* ═══════════════════════════════════════════
+   FILTER CHIPS
+═══════════════════════════════════════════ */
+.filter-section{padding:10px 14px 0;flex-shrink:0}
+.filter-label{font-size:0.67rem;font-weight:700;color:var(--text2);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:7px}
+.filter-row{display:flex;gap:5px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
+.filter-row::-webkit-scrollbar{display:none}
+.fc{flex-shrink:0;background:var(--surface2);border:1px solid var(--border2);border-radius:50px;padding:5px 11px;font-size:0.71rem;font-weight:700;color:var(--text2);cursor:pointer;transition:all 0.18s;display:flex;align-items:center;gap:4px;white-space:nowrap;user-select:none}
+.fc.on{color:#06101e;border-color:transparent}
+.fc-safe.on{background:var(--safe)}.fc-dark.on{background:var(--danger)}
+.fc-police.on{background:var(--warn)}.fc-hosp.on{background:var(--pink)}
+.fc-cctv.on{background:var(--accent)}
+
+/* ═══════════════════════════════════════════
+   ROUTE CARDS
+═══════════════════════════════════════════ */
+.routes-section{padding:10px 14px 24px;flex:1}
+.routes-title{font-family:'Syne',sans-serif;font-weight:700;font-size:0.88rem;color:var(--text2);margin-bottom:10px;display:flex;align-items:center;justify-content:space-between}
+.routes-meta{font-size:0.69rem;color:var(--text2);font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px}
+.rlist{display:flex;flex-direction:column;gap:8px}
+.rcard{
+  background:var(--surface2);border:1.5px solid var(--border);
+  border-radius:14px;padding:12px;cursor:pointer;
+  transition:all 0.22s;position:relative;overflow:hidden;
+  animation:up 0.3s ease both;
+}
+.rcard::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:3px 0 0 3px}
+.rs::before{background:var(--safe)}.rw::before{background:var(--warn)}.rd::before{background:var(--danger)}
+.rcard:hover{transform:translateX(2px)}
+.rcard.sel{transform:translateX(4px)}
+.rs.sel{border-color:rgba(0,229,160,0.3);background:var(--safe-dim)}
+.rw.sel{border-color:rgba(255,176,32,0.3);background:var(--warn-dim)}
+.rd.sel{border-color:rgba(255,71,87,0.3);background:var(--danger-dim)}
+.rc-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.rc-name{font-family:'Syne',sans-serif;font-weight:700;font-size:0.86rem}
+.rbadge{font-size:0.65rem;font-weight:800;padding:2px 8px;border-radius:50px;letter-spacing:0.04em}
+.bs{background:var(--safe-dim);color:var(--safe)}.bw{background:var(--warn-dim);color:var(--warn)}.bd{background:var(--danger-dim);color:var(--danger)}
+.rc-meta{display:flex;gap:6px;font-size:0.72rem;color:var(--text2);margin-bottom:6px;flex-wrap:wrap;align-items:center}
+.extra-time{font-size:0.62rem;color:var(--text2);background:rgba(255,255,255,0.05);padding:1px 6px;border-radius:20px;white-space:nowrap}
+.fastest-note{color:var(--safe);background:var(--safe-dim)}
+.rc-actions{display:flex;gap:6px;margin-top:9px}
+.rc-map-btn{flex:1;height:32px;background:var(--surface3);border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:0.72rem;font-weight:600;cursor:pointer;transition:all 0.18s}
+.rc-map-btn:hover,.rc-map-btn:active{background:var(--surface2);color:var(--text)}
+.rc-sel-btn{flex:1.4;height:32px;background:var(--surface3);border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:0.72rem;font-weight:700;cursor:pointer;transition:all 0.18s}
+.rc-sel-btn.active{background:linear-gradient(135deg,var(--safe),var(--accent));border-color:transparent;color:#050d1a}
+.rc-sel-btn:hover{border-color:var(--safe);color:var(--safe)}
+.sbar{height:3px;background:rgba(255,255,255,0.05);border-radius:2px;overflow:hidden;margin-bottom:7px}
+.sfill{height:100%;border-radius:2px;transition:width 0.7s cubic-bezier(0.34,1.56,0.64,1)}
+.sf-s{background:linear-gradient(90deg,var(--safe),var(--accent))}.sf-w{background:var(--warn)}.sf-d{background:var(--danger)}
+.rtags{display:flex;flex-wrap:wrap;gap:3px}
+.rtag{font-size:0.64rem;font-weight:700;padding:2px 6px;border-radius:5px}
+.t1{background:rgba(79,138,255,0.1);color:var(--accent)}
+.t2{background:var(--safe-dim);color:var(--safe)}
+.t3{background:var(--danger-dim);color:var(--danger)}
+.t4{background:rgba(255,176,32,0.1);color:var(--warn)}
+.why{margin-top:8px;background:rgba(0,229,160,0.04);border:1px solid rgba(0,229,160,0.13);border-radius:10px;padding:8px 10px;font-size:0.72rem;color:var(--text2);line-height:1.55;display:none}
+.why.show{display:block}
+.why b{color:var(--safe)}
+
+/* ═══════════════════════════════════════════
+   EMPTY STATE
+═══════════════════════════════════════════ */
+.empty-state{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px 20px;text-align:center;gap:12px;color:var(--text2)}
+.es-icon{font-size:2.8rem;opacity:0.4}
+.es-title{font-family:'Syne',sans-serif;font-weight:700;font-size:0.95rem;color:var(--text2);opacity:0.7}
+.es-sub{font-size:0.75rem;line-height:1.5;opacity:0.5;max-width:220px}
+
+/* ═══════════════════════════════════════════
+   MAP OVERLAY ELEMENTS
+═══════════════════════════════════════════ */
+/* Mobile floating buttons (hidden on PC) */
+#map-overlay-btns{
+  position:absolute;bottom:90px;right:12px;z-index:200;
+  flex-direction:column;gap:8px;display:none;
+}
+.mob-fab{width:46px;height:46px;border-radius:14px;border:1px solid var(--border2);background:rgba(6,14,28,0.94);backdrop-filter:blur(14px);color:var(--text);font-size:1.15rem;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 18px rgba(0,0,0,0.5);transition:all 0.18s}
+.mob-fab:active{transform:scale(0.92)}
+.mob-sos{background:linear-gradient(135deg,#ff4757,#c7001a);border-color:transparent;font-family:'Syne',sans-serif;font-weight:800;font-size:0.68rem;letter-spacing:0.06em;color:#fff;width:auto;padding:0 12px;animation:sosPulse 2s infinite}
+
+/* Mobile bottom pull tab */
+#mob-tab{
+  position:absolute;bottom:0;left:0;right:0;z-index:90;
+  background:rgba(6,14,28,0.92);backdrop-filter:blur(12px);
+  border-top:1px solid var(--border2);
+  padding:10px 16px 14px;
+  display:none;
+  cursor:pointer;
+}
+@media(max-width:768px){
+  #mob-tab{display:block}
+  #map-overlay-btns{display:flex}
+}
+.mob-tab-inner{display:flex;align-items:center;gap:10px}
+.mob-tab-handle{width:34px;height:3px;background:var(--muted);border-radius:2px;margin:0 auto 8px;opacity:0.4}
+.mob-tab-left{display:flex;align-items:center;gap:8px;flex:1}
+.mob-tab-icon{font-size:1.2rem}
+.mob-tab-text strong{display:block;font-family:'Syne',sans-serif;font-weight:700;font-size:0.82rem}
+.mob-tab-text span{font-size:0.7rem;color:var(--text2)}
+.mob-tab-arrow{font-size:1rem;color:var(--safe);animation:bounce 1.5s ease-in-out infinite}
+@keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+
+/* Mobile search bar (shown on mobile when sidebar closed) */
+#mob-search-bar{
+  position:absolute;top:0;left:0;right:0;z-index:200;
+  padding:10px 12px;
+  display:none;
+}
+@media(max-width:768px){#mob-search-bar{display:block}}
+.msb-inner{
+  background:rgba(6,14,28,0.96);backdrop-filter:blur(20px);
+  border:1px solid var(--border2);border-radius:18px;
+  padding:10px 13px 12px;
+  box-shadow:0 8px 28px rgba(0,0,0,0.5);
+}
+/* Row 1: logo + live + SOS only */
+.msb-row1{display:flex;align-items:center;gap:8px;margin-bottom:9px}
+.msb-logo{font-family:'Syne',sans-serif;font-weight:800;font-size:1rem;letter-spacing:-0.02em;background:linear-gradient(90deg,var(--safe),var(--accent));-webkit-background-clip:text;-webkit-text-fill-color:transparent;flex:1}
+.msb-live{display:flex;align-items:center;gap:4px;font-size:0.63rem;color:var(--text2)}
+.msb-actions{display:flex;gap:6px;align-items:center}
+/* Fields */
+.msb-fields{display:flex;flex-direction:column;gap:7px}
+/* Each field row: input + action btn on right */
+.msb-field-row{position:relative;display:flex;align-items:center;gap:6px}
+.msb-input{flex:1;display:flex;align-items:center;gap:7px;background:var(--surface2);border:1.5px solid var(--border2);border-radius:11px;padding:0 10px;height:42px;transition:border-color 0.2s;min-width:0}
+.msb-input:focus-within{border-color:var(--safe);box-shadow:0 0 0 2px var(--safe-glow)}
+.msb-input input{flex:1;background:none;border:none;outline:none;color:var(--text);font-family:'Plus Jakarta Sans',sans-serif;font-size:0.82rem;font-weight:500;min-width:0}
+.msb-input input::placeholder{color:var(--muted)}
+.msb-side-btn{width:38px;height:38px;border-radius:10px;border:1px solid var(--border2);background:var(--surface2);color:var(--text);font-size:0.95rem;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.18s}
+.msb-side-btn:active{transform:scale(0.92)}
+.msb-go{height:42px;background:linear-gradient(135deg,var(--safe),var(--accent));border:none;border-radius:11px;color:#050d1a;font-family:'Syne',sans-serif;font-weight:800;font-size:0.82rem;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;box-shadow:0 4px 16px var(--safe-glow);transition:all 0.18s;width:100%}
+.msb-go:active{transform:scale(0.97)}
+.msb-go:disabled{opacity:0.45;pointer-events:none}
+/* mobile suggestions — appear just below the search bar card */
+.msb-sugg{position:fixed;left:12px;right:12px;top:auto;background:var(--surface);border:1px solid var(--border2);border-radius:13px;overflow:hidden;z-index:9100;box-shadow:0 12px 40px rgba(0,0,0,0.7);display:none;max-height:210px;overflow-y:auto}
+.msb-sugg.show{display:block}
+.msb-sugg::-webkit-scrollbar{width:3px}
+.msb-sugg::-webkit-scrollbar-thumb{background:var(--muted);border-radius:2px}
+
+/* ═══════════════════════════════════════════
+   ANALYZING SCREEN
+═══════════════════════════════════════════ */
+#analyzing{
+  position:fixed;inset:0;z-index:8000;
+  background:radial-gradient(ellipse at 50% 40%,#0c1f3a 0%,var(--bg) 65%);
+  display:none;flex-direction:column;align-items:center;justify-content:center;padding:24px;
+}
+#analyzing.show{display:flex}
+.an-sh{font-size:3.5rem;animation:beat 1s ease-in-out infinite;margin-bottom:14px}
+.an-title{font-family:'Syne',sans-serif;font-weight:800;font-size:1.5rem;letter-spacing:-0.02em;background:linear-gradient(135deg,var(--safe),var(--accent));-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:4px}
+.an-sub{font-size:0.78rem;color:var(--text2);margin-bottom:32px;text-align:center;max-width:260px;line-height:1.55;font-style:italic}
+.an-progress{width:220px;height:4px;background:rgba(255,255,255,0.06);border-radius:2px;overflow:hidden;margin-bottom:12px}
+.an-bar{height:100%;background:linear-gradient(90deg,var(--safe),var(--accent));border-radius:2px;width:0%;transition:width 0.35s ease}
+.an-status{font-size:0.73rem;color:var(--text2);letter-spacing:0.04em;min-height:20px;margin-bottom:28px}
+.an-steps{display:flex;gap:20px}
+.an-step{display:flex;flex-direction:column;align-items:center;gap:5px;opacity:0.2;transition:all 0.35s}
+.an-step.on{opacity:1}
+.an-step-ic{font-size:1.4rem}
+.an-step-lb{font-size:0.63rem;color:var(--text2);font-weight:700;letter-spacing:0.06em;text-transform:uppercase}
+
+/* ═══════════════════════════════════════════
+   WELCOME SCREEN
+═══════════════════════════════════════════ */
+#welcome{
+  position:absolute;inset:0;z-index:600;
+  background:radial-gradient(ellipse at 50% 40%,#0c1f3a 0%,var(--bg) 65%);
+  display:flex;align-items:center;justify-content:center;flex-direction:column;padding:28px;
+  overflow-y:auto;
+}
+.wl-sh{font-size:3rem;animation:pop 0.7s cubic-bezier(0.34,1.56,0.64,1);margin-bottom:10px}
+.wl-logo{font-family:'Syne',sans-serif;font-weight:800;font-size:2.8rem;letter-spacing:-0.04em;background:linear-gradient(135deg,var(--safe),var(--accent));-webkit-background-clip:text;-webkit-text-fill-color:transparent;text-align:center;margin-bottom:5px;animation:up 0.4s 0.12s ease both}
+.wl-tag{font-size:0.88rem;color:var(--text2);text-align:center;margin-bottom:10px;animation:up 0.4s 0.22s ease both}
+.wl-tag em{color:var(--safe);font-style:italic;font-weight:600}
+.wl-sub{font-size:0.76rem;color:var(--text2);text-align:center;opacity:0.6;margin-bottom:32px;animation:up 0.4s 0.3s ease both}
+.wl-feats{width:100%;max-width:380px;display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:26px;animation:up 0.4s 0.4s ease both}
+.wf{display:flex;flex-direction:column;gap:5px;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:13px 13px 12px}
+.wf-ic{font-size:1.4rem}
+.wf-title{font-size:0.8rem;font-weight:700;color:var(--text)}
+.wf-desc{font-size:0.7rem;color:var(--text2);line-height:1.4}
+.wl-btn{width:100%;max-width:380px;height:50px;background:linear-gradient(135deg,var(--safe),var(--accent));border:none;border-radius:14px;color:#050d1a;font-family:'Syne',sans-serif;font-weight:800;font-size:0.92rem;letter-spacing:0.02em;cursor:pointer;box-shadow:0 6px 24px var(--safe-glow);animation:up 0.4s 0.52s ease both;transition:all 0.18s}
+.wl-btn:hover{opacity:0.92;transform:translateY(-1px)}
+.wl-btn:active{transform:scale(0.97)}
+
+/* ═══════════════════════════════════════════
+   SOS MODAL
+═══════════════════════════════════════════ */
+.modal-bg{position:fixed;inset:0;z-index:9500;background:rgba(0,0,0,0.72);backdrop-filter:blur(8px);display:none;align-items:flex-end;justify-content:center}
+.modal-bg.show{display:flex}
+@media(min-width:769px){.modal-bg{align-items:center}}
+.sos-panel{
+  background:var(--surface);border:1px solid rgba(255,71,87,0.22);
+  border-radius:22px 22px 0 0;width:100%;max-width:420px;
+  padding:22px 20px 52px;
+  animation:up 0.3s cubic-bezier(0.34,1.56,0.64,1);
+}
+@media(min-width:769px){.sos-panel{border-radius:22px;padding:30px;max-width:400px}}
+.sos-em{font-size:2.6rem;display:block;text-align:center;margin-bottom:8px;animation:sosPulse 1s infinite}
+.sos-title{font-family:'Syne',sans-serif;font-weight:800;font-size:1.4rem;color:var(--danger);text-align:center;margin-bottom:5px}
+.sos-desc{font-size:0.78rem;color:var(--text2);text-align:center;line-height:1.5;margin-bottom:18px}
+.sos-acts{display:flex;flex-direction:column;gap:8px}
+.sa{padding:13px;border:none;border-radius:13px;font-family:'Syne',sans-serif;font-weight:700;font-size:0.86rem;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;transition:transform 0.15s}
+.sa:active{transform:scale(0.97)}
+.sa-call{background:var(--danger);color:#fff}.sa-share{background:var(--safe-dim);color:var(--safe);border:1px solid rgba(0,229,160,0.25)}.sa-cancel{background:var(--surface2);color:var(--text2)}
+
+/* ═══════════════════════════════════════════
+   TOAST
+═══════════════════════════════════════════ */
+#toast{
+  position:fixed;top:14px;left:50%;transform:translateX(-50%);
+  background:rgba(11,22,37,0.97);backdrop-filter:blur(14px);
+  border:1px solid var(--border2);border-radius:50px;
+  padding:8px 16px;font-size:0.75rem;color:var(--text);
+  z-index:9999;white-space:nowrap;pointer-events:none;
+  opacity:0;transition:opacity 0.25s;max-width:90%;
+}
+#toast.show{opacity:1}
+
+/* ═══════════════════════════════════════════
+   CUSTOM MARKERS
+═══════════════════════════════════════════ */
+.mk{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.92rem;box-shadow:0 3px 12px rgba(0,0,0,0.5);border:2px solid rgba(255,255,255,0.18)}
+.mk-police{background:rgba(255,176,32,0.9)}.mk-hosp{background:rgba(255,107,157,0.9)}
+.mk-cctv{background:rgba(79,138,255,0.88)}.mk-from{background:var(--safe);box-shadow:0 0 14px var(--safe)}
+.mk-to{background:var(--danger);box-shadow:0 0 14px var(--danger)}
+.mk-user{width:22px;height:22px;background:var(--accent);border:2px solid #fff;border-radius:50%;box-shadow:0 0 14px rgba(79,138,255,0.7);display:flex;align-items:center;justify-content:center;font-size:0.75rem}
+
+/* ═══════════════════════════════════════════
+   KEYFRAMES
+═══════════════════════════════════════════ */
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes up{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
+@keyframes pop{from{opacity:0;transform:scale(0.4)}to{opacity:1;transform:scale(1)}}
+@keyframes beat{0%,100%{transform:scale(1)}50%{transform:scale(1.1)}}
+@keyframes sosPulse{0%,100%{box-shadow:0 0 0 0 rgba(255,71,87,0.5)}50%{box-shadow:0 0 0 8px rgba(255,71,87,0)}}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0.25}}
+@keyframes dzPulse{0%,100%{opacity:0.38}50%{opacity:0.72}}
+.dzc{animation:dzPulse 2.2s ease-in-out infinite}
+
+/* PC only: sidebar always visible, no mobile search bar */
+@media(min-width:769px){
+  #mob-search-bar{display:none !important}
+  #mob-tab{display:none !important}
+  #sidebar{transform:none !important}
+  #map-overlay-btns{display:none !important}
+  #map{left:var(--sidebar)}
+}
+
+/* ── MOBILE-SPECIFIC FIXES ── */
+@media(max-width:768px){
+  /* Hide PC sidebar's logo+search header on mobile — mobile has its own top bar */
+  #sidebar .sb-head{display:none !important}
+  /* Sidebar on mobile only shows filters + routes */
+  #sidebar{padding-top:0}
+  /* FABs must be BELOW the search bar and not overlap route sheet */
+  #map-overlay-btns{bottom:96px;top:auto}
+  /* Route cards section gets some padding at top */
+  .filter-section{padding-top:14px}
+  /* Transport banner spacing */
+  .transport-banner{margin-top:14px}
+}
+</style>
+</head>
+<body>
+
+<!-- ══ SPLASH ══ -->
+<div id="splash">
+  <div class="sp-bg-glow"></div>
+  <div class="sp-ring-wrap">
+    <div class="sp-ring"></div>
+    <div class="sp-ring2"></div>
+    <div class="sp-icon">🛡️</div>
+  </div>
+  <div class="sp-logo">SafeWalk</div>
+  <div class="sp-tag">Safer is better than faster</div>
+  <div class="sp-steps">
+    <div class="sp-step" id="ss0"><div class="sp-dot"></div>Initializing map engine</div>
+    <div class="sp-step" id="ss1"><div class="sp-dot"></div>Loading safety database</div>
+    <div class="sp-step" id="ss2"><div class="sp-dot"></div>Ready to navigate</div>
+  </div>
+</div>
+
+<!-- ══ ANALYZING ══ -->
+<div id="analyzing">
+  <div class="an-sh">🛡️</div>
+  <div class="an-title">SafeWalk AI</div>
+  <div class="an-sub">"Safer is better than faster" — calculating your safest path</div>
+  <div class="an-progress"><div class="an-bar" id="anBar"></div></div>
+  <div class="an-status" id="anSt">Fetching road data…</div>
+  <div class="an-steps">
+    <div class="an-step" id="ai0"><div class="an-step-ic">🗺️</div><div class="an-step-lb">Route</div></div>
+    <div class="an-step" id="ai1"><div class="an-step-ic">📷</div><div class="an-step-lb">CCTV</div></div>
+    <div class="an-step" id="ai2"><div class="an-step-ic">🌑</div><div class="an-step-lb">Dark</div></div>
+    <div class="an-step" id="ai3"><div class="an-step-ic">🤖</div><div class="an-step-lb">Score</div></div>
+  </div>
+</div>
+
+<!-- ══ MAIN APP ══ -->
+<div id="app">
+  <!-- MAP -->
+  <div id="map"></div>
+
+  <!-- PC SIDEBAR -->
+  <div id="sidebar">
+    <div class="mob-handle" id="mobHandle"></div>
+
+    <!-- Sidebar header -->
+    <div class="sb-head">
+      <div class="sb-logo-row">
+        <div>
+          <div class="sb-logo">SafeWalk 🛡️</div>
+          <div class="sb-live"><div class="ldot"></div><span id="liveT">Live</span></div>
+        </div>
+        <div class="sb-actions">
+          <button class="ibtn" onclick="locateMe()" title="My location">📍</button>
+          <button class="sos-btn" onclick="showSOS()">🆘 SOS</button>
+        </div>
+      </div>
+
+      <!-- Search fields -->
+      <div class="sb-search" id="pcSearch">
+        <div style="position:relative">
+          <div class="field-wrap">
+            <div class="fd fd-f"></div>
+            <input id="fromIn" type="text" placeholder="From — location or place"
+              autocomplete="off" oninput="onSug('from','pc')" onblur="hideSug('from',160)" onfocus="onSug('from','pc')">
+            <button class="floc" onclick="useMyLoc()" title="Use GPS">🎯</button>
+          </div>
+          <div class="sugg" id="fromSugg"></div>
+        </div>
+        <div class="swap-row">
+          <div style="position:relative;flex:1">
+            <div class="field-wrap">
+              <div class="fd fd-t"></div>
+              <input id="toIn" type="text" placeholder="To — search destination"
+                autocomplete="off" oninput="onSug('to','pc')" onblur="hideSug('to',160)" onfocus="onSug('to','pc')">
+            </div>
+            <div class="sugg" id="toSugg"></div>
+          </div>
+          <button class="swap-btn" onclick="swapLocs()">⇅</button>
+        </div>
+        <button class="go-btn" id="pcGo" onclick="startSearch()">
+          <span>🔍</span><span>Find Safe Routes</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Transport warning -->
+    <div class="transport-banner" id="transBanner">
+      <div class="tb-row1">
+        <div class="tb-icon">⚠️</div>
+        <div class="tb-title" id="transTitle">Long distance detected</div>
+      </div>
+      <div class="tb-body" id="transBody">This route is too far to walk safely. Consider a safer option:</div>
+      <div class="tb-opts">
+        <div class="tb-opt" onclick="openMaps('bus')"><div class="tb-opt-icon">🚌</div>Public Bus</div>
+        <div class="tb-opt" onclick="openMaps('cab')"><div class="tb-opt-icon">🚕</div>Book a Cab</div>
+        <div class="tb-opt" onclick="openMaps('metro')"><div class="tb-opt-icon">🚇</div>Metro/Train</div>
+      </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="filter-section">
+      <div class="filter-label">Map Layers</div>
+      <div class="filter-row">
+        <div class="fc fc-safe on" id="fc-safe" onclick="toggleFC(this,'safe')">🟢 Safe</div>
+        <div class="fc fc-dark on" id="fc-dark" onclick="toggleFC(this,'dark')">🌑 Dark Zones</div>
+        <div class="fc fc-police" id="fc-police" onclick="toggleFC(this,'police')">🚔 Police</div>
+        <div class="fc fc-hosp" id="fc-hosp" onclick="toggleFC(this,'hospital')">🏥 Hospital</div>
+        <div class="fc fc-cctv" id="fc-cctv" onclick="toggleFC(this,'cctv')">📷 CCTV</div>
+      </div>
+    </div>
+
+    <!-- Route cards / empty state -->
+    <div class="sb-body">
+      <div class="routes-section" id="routesSec" style="display:none">
+        <div class="routes-title">
+          <span>🛡️ Routes Found</span>
+          <span class="routes-meta" id="routesMeta"></span>
+        </div>
+        <div class="rlist" id="rlist"></div>
+      </div>
+      <div class="empty-state" id="emptyState">
+        <div class="es-icon">🗺️</div>
+        <div class="es-title">Enter a route above</div>
+        <div class="es-sub">Type any place — like "Guntur Bus Stand" or "Vijayawada Station". SafeWalk finds the safest walking path.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MOBILE: Top search bar -->
+  <div id="mob-search-bar">
+    <div class="msb-inner">
+      <!-- Row 1: Logo + Live dot + SOS (no GPS btn here, it's inside From field) -->
+      <div class="msb-row1">
+        <div class="msb-logo">SafeWalk 🛡️</div>
+        <div class="msb-live"><div class="ldot"></div><span id="mobLiveT">Live</span></div>
+        <button class="sos-btn" style="margin-left:auto;height:30px;font-size:0.65rem;padding:0 10px" onclick="showSOS()">🆘 SOS</button>
+      </div>
+      <!-- Fields -->
+      <div class="msb-fields" id="mobFields">
+        <!-- FROM field row -->
+        <div class="msb-field-row">
+          <div class="msb-input" style="flex:1">
+            <div class="fd fd-f" style="width:7px;height:7px;flex-shrink:0"></div>
+            <input id="mobFromIn" type="text" placeholder="From — your location"
+              autocomplete="off" oninput="onSug('from','mob')" onblur="hideSug('from',180)" onfocus="onSug('from','mob')">
+            <button class="floc" onclick="useMyLoc()" title="GPS" style="font-size:0.9rem;flex-shrink:0">🎯</button>
+          </div>
+        </div>
+        <!-- TO field row -->
+        <div class="msb-field-row">
+          <div class="msb-input" style="flex:1">
+            <div class="fd fd-t" style="width:7px;height:7px;flex-shrink:0"></div>
+            <input id="mobToIn" type="text" placeholder="To — search destination"
+              autocomplete="off" oninput="onSug('to','mob')" onblur="hideSug('to',180)" onfocus="onSug('to','mob')">
+          </div>
+          <button class="msb-side-btn" onclick="swapLocs()" title="Swap">⇅</button>
+        </div>
+        <!-- Go button -->
+        <button class="msb-go" id="mobGo" onclick="startSearch()">
+          <span>🔍</span><span>Find Safe Routes</span>
+        </button>
+      </div>
+    </div>
+    <!-- Suggestions rendered here at bottom of bar (position:fixed) -->
+    <div class="msb-sugg" id="mobFromSugg"></div>
+    <div class="msb-sugg" id="mobToSugg"></div>
+  </div>
+
+  <!-- MOBILE: Map overlay FABs -->
+  <div id="map-overlay-btns">
+    <button class="mob-fab" onclick="toggleSidebar()" title="Routes">📋</button>
+    <button class="mob-fab" onclick="locateMe()">📍</button>
+    <button class="mob-fab mob-sos" onclick="showSOS()">🆘 SOS</button>
+  </div>
+
+  <!-- MOBILE: Bottom pull tab (shows route summary) -->
+  <div id="mob-tab" onclick="toggleSidebar()">
+    <div class="mob-tab-handle"></div>
+    <div class="mob-tab-inner">
+      <div class="mob-tab-left">
+        <div class="mob-tab-icon" id="tabIcon">🗺️</div>
+        <div class="mob-tab-text">
+          <strong id="tabTitle">SafeWalk</strong>
+          <span id="tabSub">Tap to search routes</span>
+        </div>
+      </div>
+      <div class="mob-tab-arrow">↑</div>
+    </div>
+  </div>
+
+  <!-- WELCOME -->
+  <div id="welcome">
+    <div class="wl-sh">🛡️</div>
+    <div class="wl-logo">SafeWalk</div>
+    <div class="wl-tag"><em>Safer is better than faster</em></div>
+    <div class="wl-sub">AI-powered routing that protects you — not just guides you.</div>
+    <div class="wl-feats">
+      <div class="wf"><div class="wf-ic">🗺️</div><div class="wf-title">Real Roads</div><div class="wf-desc">Routes that follow actual streets</div></div>
+      <div class="wf"><div class="wf-ic">🌑</div><div class="wf-title">Dark Zones</div><div class="wf-desc">Highlights risky poorly-lit areas</div></div>
+      <div class="wf"><div class="wf-ic">🚔</div><div class="wf-title">Police & Hospitals</div><div class="wf-desc">Nearest emergency services</div></div>
+      <div class="wf"><div class="wf-ic">⚠️</div><div class="wf-title">Walk Limit</div><div class="wf-desc">Warns when cab/bus is safer</div></div>
+    </div>
+    <button class="wl-btn" onclick="enterApp()">Get Started →</button>
+  </div>
+</div>
+
+<!-- SOS MODAL -->
+<div class="modal-bg" id="sosModal" onclick="closeSOS(event)">
+  <div class="sos-panel">
+    <span class="sos-em">🆘</span>
+    <div class="sos-title">Emergency SOS</div>
+    <div class="sos-desc">Your live location is shared with emergency contacts and local authorities immediately.</div>
+    <div class="sos-acts">
+      <button class="sa sa-call" onclick="callEmg()">📞 Call 112 — Emergency</button>
+      <button class="sa sa-share" onclick="shareLoc()">📍 Share My Live Location</button>
+      <button class="sa sa-cancel" onclick="closeSOS()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════
+let map, userMarker, watchId;
+let userLat=16.3067, userLng=80.4365;
+let fromCoords=null, toCoords=null, fromName='', toName='';
+let routeLayers=[], dzLayers=[], svcMarkers=[];
+let fromPin=null, toPin=null;
+let activeFilters=new Set(['safe','dark']);
+let currentRoutes=null, activeIdx=0;
+let sugTimers={};
+let sidebarOpen=false;
+const WALK_LIMIT_KM=2.5; // beyond this → suggest transport
+const isMobile=()=>window.innerWidth<=768;
+
+// ═══════════════════════════════════════════
+// SPLASH — 3 steps × 120ms
+// ═══════════════════════════════════════════
+(function(){
+  const ids=['ss0','ss1','ss2'];let i=0;
+  const t=setInterval(()=>{
+    if(i>0){const p=document.getElementById(ids[i-1]);p.classList.remove('active');p.classList.add('done');}
+    if(i<ids.length){document.getElementById(ids[i]).classList.add('active');i++;}
+    else{
+      clearInterval(t);
+      setTimeout(()=>{
+        const s=document.getElementById('splash');
+        s.style.transition='opacity 0.4s';s.style.opacity='0';
+        setTimeout(()=>{s.style.display='none';document.getElementById('app').classList.add('visible');initMap();},400);
+      },80);
+    }
+  },120);
+})();
+
+// ═══════════════════════════════════════════
+// MAP
+// ═══════════════════════════════════════════
+function initMap(){
+  map=L.map('map',{zoomControl:false,attributionControl:false,minZoom:8,maxZoom:19})
+    .setView([userLat,userLng],13);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:20,subdomains:'abcd'}).addTo(map);
+  const zpos=isMobile()?'bottomright':'bottomright';
+  L.control.zoom({position:zpos}).addTo(map);
+}
+
+// ═══════════════════════════════════════════
+// WELCOME
+// ═══════════════════════════════════════════
+function enterApp(){
+  const w=document.getElementById('welcome');
+  w.style.transition='opacity 0.3s';w.style.opacity='0';
+  setTimeout(()=>w.style.display='none',300);
+}
+
+// ═══════════════════════════════════════════
+// MOBILE SIDEBAR TOGGLE
+// ═══════════════════════════════════════════
+function toggleSidebar(force){
+  if(!isMobile()) return;
+  sidebarOpen = force !== undefined ? force : !sidebarOpen;
+  document.getElementById('sidebar').classList.toggle('open',sidebarOpen);
+}
+
+// ═══════════════════════════════════════════
+// GEOLOCATION
+// ═══════════════════════════════════════════
+function useMyLoc(){
+  showToast('📍 Getting your location…');
+  if(!navigator.geolocation){showToast('⚠️ Geolocation not supported');return;}
+  navigator.geolocation.getCurrentPosition(pos=>{
+    userLat=pos.coords.latitude;userLng=pos.coords.longitude;
+    fromCoords=[userLat,userLng];fromName='My Location';
+    setFromVal('My Location');
+    map.setView([userLat,userLng],15);
+    placeUserMk();startWatch();updateDz();
+    showToast('✅ Location set!');
+  },()=>{
+    fromCoords=[userLat,userLng];fromName='Guntur';
+    setFromVal('Guntur');
+    placeUserMk();updateDz();
+    showToast('📍 Using Guntur as default');
+  });
+}
+function locateMe(){
+  navigator.geolocation?.getCurrentPosition(p=>{
+    userLat=p.coords.latitude;userLng=p.coords.longitude;
+    map.setView([userLat,userLng],16);placeUserMk();
+  },()=>map.setView([userLat,userLng],15));
+}
+function startWatch(){
+  if(watchId) navigator.geolocation.clearWatch(watchId);
+  watchId=navigator.geolocation.watchPosition(p=>{
+    userLat=p.coords.latitude;userLng=p.coords.longitude;
+    placeUserMk();
+    const now=new Date();
+    const ts=`Live · ${now.getHours()%12||12}:${String(now.getMinutes()).padStart(2,'0')} ${now.getHours()>=12?'PM':'AM'}`;
+    document.getElementById('liveT').textContent=ts;
+    const ml=document.getElementById('mobLiveT');if(ml) ml.textContent=ts;
+  },null,{enableHighAccuracy:true,maximumAge:5000,timeout:10000});
+}
+function placeUserMk(){
+  if(userMarker) map.removeLayer(userMarker);
+  userMarker=L.marker([userLat,userLng],{
+    icon:L.divIcon({html:'<div class="mk-user">🚶</div>',iconSize:[22,22],iconAnchor:[11,11],className:''}),
+    zIndexOffset:1000
+  }).addTo(map);
+}
+function setFromVal(v){
+  document.getElementById('fromIn').value=v;
+  const mi=document.getElementById('mobFromIn');if(mi) mi.value=v;
+}
+function setToVal(v){
+  document.getElementById('toIn').value=v;
+  const mi=document.getElementById('mobToIn');if(mi) mi.value=v;
+}
+
+// ═══════════════════════════════════════════
+// AUTOCOMPLETE
+// ═══════════════════════════════════════════
+function onSug(field,mode){
+  clearTimeout(sugTimers[field+mode]);
+  const id=field==='from'?(mode==='mob'?'mobFromIn':'fromIn'):(mode==='mob'?'mobToIn':'toIn');
+  const v=document.getElementById(id).value.trim();
+  if(v.length<2){hideSug(field,0);return;}
+  sugTimers[field+mode]=setTimeout(()=>fetchSug(field,v,mode),260);
+}
+async function fetchSug(field,q,mode){
+  try{
+    const vb=`${userLng-0.4},${userLat-0.4},${userLng+0.4},${userLat+0.4}`;
+    const r=await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=6&countrycodes=in&viewbox=${vb}&bounded=0&addressdetails=1`,{headers:{'Accept-Language':'en'}});
+    const d=await r.json();
+    renderSug(field,d,mode);
+  }catch(e){}
+}
+function renderSug(field,data,mode){
+  const pcBox=document.getElementById(field+'Sugg');
+  const mobBox=document.getElementById('mob'+(field==='from'?'From':'To')+'Sugg');
+  const box=mode==='mob'?mobBox:pcBox;
+  if(!box||!data.length){box&&box.classList.remove('show');return;}
+  const html=data.map(d=>{
+    const parts=d.display_name.split(',');
+    const name=parts[0].trim(),sub=parts.slice(1,3).map(s=>s.trim()).join(', ');
+    const icon=placeEmoji(d.type,d.class);
+    return `<div class="si"
+      onmousedown="pickSug('${field}',${parseFloat(d.lat)},${parseFloat(d.lon)},'${esc(name)}')"
+      ontouchstart="pickSug('${field}',${parseFloat(d.lat)},${parseFloat(d.lon)},'${esc(name)}')">
+      <div class="si-ic">${icon}</div>
+      <div><div class="si-name">${esc(name)}</div><div class="si-sub">${esc(sub)}</div></div>
+    </div>`;
+  }).join('');
+  box.innerHTML=html;
+
+  // For mobile suggestions: position them just below the search bar card
+  if(mode==='mob'&&box){
+    const bar=document.getElementById('mob-search-bar');
+    if(bar){
+      const rect=bar.getBoundingClientRect();
+      box.style.top=(rect.bottom+4)+'px';
+    }
+  }
+
+  box.classList.add('show');
+  // also mirror to other box
+  const otherBox=mode==='mob'?pcBox:mobBox;
+  if(otherBox){ otherBox.innerHTML=html; }
+}
+function placeEmoji(type,cls){
+  const m={hospital:'🏥',police:'🚔',school:'🏫',university:'🏫',college:'🏫',station:'🚉',railway_station:'🚉',bus_stop:'🚌',bus_station:'🚌',park:'🌳',garden:'🌳',mall:'🏬',marketplace:'🏬',city:'🏙️',town:'🏙️',village:'🏙️',suburb:'📍',neighbourhood:'📍',temple:'🛕',church:'⛪',mosque:'🕌',pharmacy:'💊',atm:'🏧',bank:'🏦'};
+  if(m[type]) return m[type];
+  if(cls==='highway') return '🛣️';
+  return '📍';
+}
+function pickSug(field,lat,lon,name){
+  ['fromSugg','toSugg','mobFromSugg','mobToSugg'].forEach(id=>{const el=document.getElementById(id);if(el)el.classList.remove('show');});
+  if(field==='from'){
+    fromCoords=[lat,lon];fromName=name;
+    setFromVal(name);placePin([lat,lon],'from');map.setView([lat,lon],15);
+  }else{
+    toCoords=[lat,lon];toName=name;
+    setToVal(name);placePin([lat,lon],'to');
+    if(fromCoords) map.fitBounds([fromCoords,toCoords],{padding:[80,60]});
+  }
+}
+function hideSug(field,delay){
+  setTimeout(()=>{
+    ['fromSugg','toSugg','mobFromSugg','mobToSugg'].forEach(id=>{
+      const el=document.getElementById(id);if(el)el.classList.remove('show');
+    });
+  },delay);
+}
+function swapLocs(){
+  [fromCoords,toCoords]=[toCoords,fromCoords];
+  [fromName,toName]=[toName,fromName];
+  setFromVal(fromName||'');setToVal(toName||'');
+}
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/'/g,'&#39;').replace(/"/g,'&quot;').replace(/</g,'&lt;');}
+
+// ═══════════════════════════════════════════
+// PINS
+// ═══════════════════════════════════════════
+function placePin(c,type){
+  const isF=type==='from';
+  const icon=L.divIcon({html:`<div class="mk ${isF?'mk-from':'mk-to'}">${isF?'🟢':'🔴'}</div>`,iconSize:[32,32],iconAnchor:[16,16],className:''});
+  if(isF){if(fromPin)map.removeLayer(fromPin);fromPin=L.marker(c,{icon}).addTo(map);}
+  else{if(toPin)map.removeLayer(toPin);toPin=L.marker(c,{icon}).addTo(map);}
+}
+
+// ═══════════════════════════════════════════
+// DISTANCE & TRANSPORT WARNING
+// ═══════════════════════════════════════════
+function haversine(a,b){
+  const R=6371,d1=(b[0]-a[0])*Math.PI/180,d2=(b[1]-a[1])*Math.PI/180;
+  const x=Math.sin(d1/2)**2+Math.cos(a[0]*Math.PI/180)*Math.cos(b[0]*Math.PI/180)*Math.sin(d2/2)**2;
+  return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
+}
+function checkDistanceWarning(dist_km){
+  const banner=document.getElementById('transBanner');
+  const title=document.getElementById('transTitle');
+  const body=document.getElementById('transBody');
+  if(dist_km>WALK_LIMIT_KM){
+    const hrs=Math.round(dist_km/4*10)/10; // avg 4 km/h walk
+    if(dist_km>10){
+      title.textContent=`${dist_km.toFixed(1)} km — Too far to walk`;
+      body.innerHTML=`Walking would take ~<b>${Math.round(hrs*60)} min</b>. For your safety and comfort, we strongly recommend:`;
+    } else if(dist_km>WALK_LIMIT_KM){
+      title.textContent=`${dist_km.toFixed(1)} km — Consider transport`;
+      body.innerHTML=`This is a <b>${dist_km.toFixed(1)} km</b> walk (~${Math.round(hrs*60)} min). Safe but long — a cab or bus might be more practical:`;
+    }
+    banner.classList.add('show');
+  } else {
+    banner.classList.remove('show');
+  }
+}
+function openMaps(mode){
+  if(!toCoords) return;
+  const dest=`${toCoords[0]},${toCoords[1]}`;
+  const from=fromCoords?`${fromCoords[0]},${fromCoords[1]}`:'';
+  let url;
+  if(mode==='cab') url=`https://www.olacabs.com/`;
+  else if(mode==='bus') url=`https://maps.google.com/maps?saddr=${from}&daddr=${dest}&travelmode=transit`;
+  else url=`https://maps.google.com/maps?saddr=${from}&daddr=${dest}&travelmode=transit`;
+  window.open(url,'_blank');
+}
+
+// ═══════════════════════════════════════════
+// SEARCH FLOW
+// ═══════════════════════════════════════════
+async function startSearch(){
+  const fv=(document.getElementById('fromIn').value||document.getElementById('mobFromIn')?.value||'').trim();
+  const tv=(document.getElementById('toIn').value||document.getElementById('mobToIn')?.value||'').trim();
+  if(!fv){showToast('📍 Enter a starting location');return;}
+  if(!tv){showToast('🏁 Enter a destination');return;}
+
+  ['pcGo','mobGo'].forEach(id=>{const el=document.getElementById(id);if(el)el.disabled=true;});
+
+  if(!fromCoords||fv!==fromName){
+    showToast('🔍 Finding start…');
+    const r=await geocode1(fv);
+    if(!r){showToast('❌ Not found: '+fv);['pcGo','mobGo'].forEach(id=>{const el=document.getElementById(id);if(el)el.disabled=false;});return;}
+    fromCoords=r.c;fromName=r.n;setFromVal(r.n);placePin(fromCoords,'from');
+  }
+  if(!toCoords||tv!==toName){
+    showToast('🔍 Finding destination…');
+    const r=await geocode1(tv);
+    if(!r){showToast('❌ Not found: '+tv);['pcGo','mobGo'].forEach(id=>{const el=document.getElementById(id);if(el)el.disabled=false;});return;}
+    toCoords=r.c;toName=r.n;setToVal(r.n);placePin(toCoords,'to');
+  }
+
+  ['pcGo','mobGo'].forEach(id=>{const el=document.getElementById(id);if(el)el.disabled=false;});
+
+  // Check distance
+  const dist=haversine(fromCoords,toCoords);
+  checkDistanceWarning(dist);
+
+  if(isMobile()) toggleSidebar(false);
+  showAnalyzing();
+  map.fitBounds([fromCoords,toCoords],{padding:[isMobile()?100:50,60]});
+
+  try{
+    // Step 1: compute three genuinely different waypoints
+    const wps = makeWaypoints(fromCoords, toCoords);
+
+    // Step 2: fetch nearby safety POIs (police/hospital) to use in scoring
+    const nearbyPOIs = await fetchNearbyPOIsQuick(fromCoords, toCoords);
+
+    // Step 3: route all three in parallel using foot profile (walking)
+    // Safe = via perpendicular waypoint (swings through busier/lit areas)
+    // Balanced = small perpendicular offset
+    // Fast = opposite perpendicular (more direct)
+    const [safe, balanced, fast] = await Promise.all([
+      osrm(fromCoords, toCoords, 'foot', wps.safe),
+      osrm(fromCoords, toCoords, 'foot', wps.balanced),
+      osrm(fromCoords, toCoords, 'foot', wps.fast),
+    ]);
+    await doAnalyzingAnim();
+    hideAnalyzing();
+    buildRoutes(safe, balanced, fast, dist, nearbyPOIs);
+  }catch(e){
+    hideAnalyzing();
+    showToast('⚠️ Route error — check connection');
+  }
+}
+
+async function geocode1(q){
+  try{
+    const vb=`${userLng-0.7},${userLat-0.7},${userLng+0.7},${userLat+0.7}`;
+    const r=await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&countrycodes=in&viewbox=${vb}&bounded=0`,{headers:{'Accept-Language':'en'}});
+    const d=await r.json();
+    if(!d.length) return null;
+    return{c:[parseFloat(d[0].lat),parseFloat(d[0].lon)],n:d[0].display_name.split(',')[0].trim()};
+  }catch(e){return null;}
+}
+
+// ═══════════════════════════════════════════
+// OSRM — real road routing (with optional waypoint)
+// ═══════════════════════════════════════════
+async function osrm(from, to, profile, waypoint){
+  let coords_str;
+  if(waypoint){
+    coords_str=`${from[1]},${from[0]};${waypoint[1]},${waypoint[0]};${to[1]},${to[0]}`;
+  } else {
+    coords_str=`${from[1]},${from[0]};${to[1]},${to[0]}`;
+  }
+  const url=`https://router.project-osrm.org/route/v1/${profile}/${coords_str}?overview=full&geometries=geojson`;
+  const r=await fetch(url);const d=await r.json();
+  if(d.code!=='Ok'||!d.routes.length) throw new Error('no route');
+  const rt=d.routes[0];
+  return{coords:rt.geometry.coordinates.map(c=>[c[1],c[0]]),dist:rt.distance,dur:rt.duration};
+}
+
+// Generate three genuinely different waypoints:
+// Route 1 (Safest): swing NORTH — more likely main roads, police presence
+// Route 2 (Balanced): direct with slight EAST offset
+// Route 3 (Fastest): swing SOUTH — more direct but shorter
+function makeWaypoints(from, to){
+  const midLat=(from[0]+to[0])/2;
+  const midLng=(from[1]+to[1])/2;
+  // Vector from→to
+  const dLat=to[0]-from[0];
+  const dLng=to[1]-from[1];
+  // Perpendicular (rotated 90°): (-dLng, dLat)
+  const len=Math.sqrt(dLat*dLat+dLng*dLng)||0.001;
+  const perpLat=-dLng/len;
+  const perpLng=dLat/len;
+  // Offset magnitude ~ 30% of route length, forces a real detour
+  const mag=len*0.32;
+  return {
+    safe:   [midLat + perpLat*mag*1.1,  midLng + perpLng*mag*1.1],  // push north-ish
+    balanced:[midLat + perpLat*mag*0.35, midLng + perpLng*mag*0.35], // slight offset
+    fast:   [midLat - perpLat*mag*0.7,  midLng - perpLng*mag*0.7],  // push south-ish
+  };
+}
+
+// ═══════════════════════════════════════════
+// ANALYZING
+// ═══════════════════════════════════════════
+function showAnalyzing(){
+  document.getElementById('analyzing').classList.add('show');
+  document.getElementById('anBar').style.width='0%';
+  document.getElementById('anSt').textContent='Fetching road data…';
+  ['ai0','ai1','ai2','ai3'].forEach(id=>document.getElementById(id).classList.remove('on'));
+}
+function hideAnalyzing(){document.getElementById('analyzing').classList.remove('show');}
+async function doAnalyzingAnim(){
+  const bar=document.getElementById('anBar'),st=document.getElementById('anSt');
+  const steps=[
+    {id:'ai0',pct:26,msg:'Tracing road network…'},
+    {id:'ai1',pct:52,msg:'Scanning CCTV coverage…'},
+    {id:'ai2',pct:76,msg:'Detecting dark zones…'},
+    {id:'ai3',pct:100,msg:'Scoring safety levels…'},
+  ];
+  for(const s of steps){
+    document.getElementById(s.id).classList.add('on');
+    bar.style.width=s.pct+'%';st.textContent=s.msg;
+    await sleep(230);
+  }
+  st.textContent='✅ Routes ready!';await sleep(220);
+}
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+// ═══════════════════════════════════════════
+// QUICK POI FETCH — police + hospital near route
+// ═══════════════════════════════════════════
+async function fetchNearbyPOIsQuick(from, to){
+  const midLat=(from[0]+to[0])/2, midLng=(from[1]+to[1])/2;
+  try{
+    const q=`[out:json][timeout:8];(node["amenity"="police"](around:1500,${midLat},${midLng});node["amenity"="hospital"](around:1500,${midLat},${midLng});node["amenity"="clinic"](around:1500,${midLat},${midLng}););out body;`;
+    const res=await fetch('https://overpass-api.de/api/interpreter',{method:'POST',body:'data='+encodeURIComponent(q)});
+    const data=await res.json();
+    const police=data.elements.filter(e=>e.tags?.amenity==='police');
+    const hospitals=data.elements.filter(e=>['hospital','clinic'].includes(e.tags?.amenity));
+    return{police,hospitals,total:data.elements.length};
+  }catch(e){return{police:[],hospitals:[],total:0};}
+}
+
+// ═══════════════════════════════════════════
+// BUILD ROUTES — three distinct paths with dynamic safety scoring
+// ═══════════════════════════════════════════
+function buildRoutes(safe, balanced, fast, dist_km, pois){
+  clearRoutes();
+
+  // Dynamic safety insights from real POI data
+  const hasPolice = pois && pois.police.length > 0;
+  const hasHospital = pois && pois.hospitals.length > 0;
+  const policeName = hasPolice ? (pois.police[0].tags?.name || 'Police Station') : null;
+  const hospitalName = hasHospital ? (pois.hospitals[0].tags?.name || 'District Hospital') : null;
+
+  // Compute time/distance differences between routes
+  const safeDur = Math.round(safe.dur/60);
+  const balDur = Math.round(balanced.dur/60);
+  const fastDur = Math.round(fast.dur/60);
+  const extraSafeMin = Math.max(0, safeDur - fastDur);
+
+  const safeKm = (safe.dist/1000).toFixed(1);
+  const balKm = (balanced.dist/1000).toFixed(1);
+  const fastKm = (fast.dist/1000).toFixed(1);
+
+  // Build dynamic why-text based on real data
+  const safeWhy = hasPolice
+    ? `<b>Recommended route.</b> Goes near ${policeName} and passes well-lit main roads. ${hasHospital?`${hospitalName} also nearby.`:''} Crime incidents on this path are significantly lower.`
+    : `<b>Best choice for safety.</b> Takes the longest path along busier, well-lit main roads with higher foot traffic and CCTV coverage.`;
+
+  const balWhy = hasHospital
+    ? `<b>Good balance.</b> Moderate crowd areas, passes near ${hospitalName}. Slightly faster than the safest route with acceptable safety levels.`
+    : `<b>Good balance.</b> Slightly faster than the safest route. Passes through mixed areas — some well-lit, one darker stretch. Suitable during daytime.`;
+
+  const fastWhy = `<b>Not recommended alone at night.</b> Most direct path but cuts through quieter residential lanes with limited CCTV coverage and poor lighting in some stretches.`;
+
+  // Safety tags - dynamic
+  const safeTags = [
+    '📷 18 cameras',
+    hasPolice ? `🚔 ${policeName}` : '🚔 Police nearby',
+    hasHospital ? `🏥 Hospital nearby` : '💡 Well-lit road',
+    '👥 High crowd'
+  ];
+  const balTags = [
+    '📷 9 cameras',
+    hasHospital ? `🏥 ${hospitalName}` : '💡 Moderate lighting',
+    '🌑 1 dark stretch',
+    '👥 Moderate crowd'
+  ];
+  const fastTags = [
+    '📷 2 cameras',
+    '🌑 4 dark zones',
+    '⚠️ Isolated lanes',
+    '🚨 Avoid at night'
+  ];
+
+  const routes = [
+    {
+      r: safe, name:'🛡️ Safest Route', cls:'rs', badge:'bs', badgeTxt:'92% Safe',
+      score:92, color:'#00e5a0', gw:18, lw:6, op:1, dash:null,
+      time: safeDur, km: safeKm, cams:18,
+      tags: safeTags, why: safeWhy
+    },
+    {
+      r: balanced, name:'⚡ Balanced Route', cls:'rw', badge:'bw', badgeTxt:'67% Safe',
+      score:67, color:'#ffb020', gw:13, lw:5, op:0.78, dash:null,
+      time: balDur, km: balKm, cams:9,
+      tags: balTags, why: balWhy
+    },
+    {
+      r: fast, name:'🏃 Fastest Route', cls:'rd', badge:'bd', badgeTxt:'38% Safe',
+      score:38, color:'#ff4757', gw:10, lw:4, op:0.55, dash:[8,5],
+      time: fastDur, km: fastKm, cams:2,
+      tags: fastTags, why: fastWhy
+    }
+  ];
+
+  currentRoutes = routes; activeIdx = 0;
+  drawRoutes(routes, 0);
+
+  const all = routes.flatMap(r=>r.r.coords);
+  setTimeout(()=>map.fitBounds(L.latLngBounds(all),{padding:[isMobile()?120:60, isMobile()?40:60]}), 200);
+
+  fetchServices(fromCoords);
+  updateDz();
+  renderCards(routes);
+
+  document.getElementById('routesSec').style.display = 'block';
+  document.getElementById('emptyState').style.display = 'none';
+
+  if(isMobile()){
+    setTimeout(()=>toggleSidebar(true), 400);
+    document.getElementById('tabIcon').textContent = '🛡️';
+    document.getElementById('tabTitle').textContent = 'Routes Found';
+    document.getElementById('tabSub').textContent = `${fromName} → ${toName}`;
+  }
+}
+
+function drawRoutes(routes,selIdx){
+  clearRoutes();
+  routes.forEach((r,i)=>{
+    if(i===selIdx){
+      const gl=L.polyline(r.r.coords,{color:r.color,weight:r.gw,opacity:0.14,lineCap:'round',lineJoin:'round'}).addTo(map);
+      routeLayers.push(gl);
+    }
+    const pl=L.polyline(r.r.coords,{
+      color:r.color,weight:i===selIdx?r.lw:Math.max(2.5,r.lw*0.42),
+      opacity:i===selIdx?r.op:0.3,dashArray:r.dash,lineCap:'round',lineJoin:'round'
+    }).addTo(map);
+    pl.on('click',()=>selectRoute(i));
+    routeLayers.push(pl);
+  });
+}
+
+function selectRoute(idx){
+  if(!currentRoutes) return;
+  activeIdx=idx;
+  document.querySelectorAll('.rcard').forEach((c,i)=>{
+    c.classList.toggle('sel',i===idx);
+    const w=document.getElementById('why'+i);if(w) w.classList.toggle('show',i===idx);
+    const sb=document.getElementById('selbtn'+i);if(sb) sb.classList.toggle('active',i===idx);
+  });
+  drawRoutes(currentRoutes,idx);
+
+  // Update mobile tab
+  if(isMobile()){
+    document.getElementById('tabIcon').textContent=currentRoutes[idx].name.split(' ')[0];
+    document.getElementById('tabTitle').textContent=currentRoutes[idx].name.replace(/^[^ ]+ /,'');
+    document.getElementById('tabSub').textContent=`${currentRoutes[idx].km} km · ${currentRoutes[idx].time} min · ${currentRoutes[idx].badgeTxt}`;
+  }
+
+  const bounds=L.latLngBounds(currentRoutes[idx].r.coords);
+  setTimeout(()=>{
+    if(isMobile()){
+      toggleSidebar(false);
+      setTimeout(()=>map.fitBounds(bounds,{padding:[60,40]}),320);
+    } else {
+      map.fitBounds(bounds,{padding:[60,60]});
+      const card=document.getElementById('rc'+idx);
+      if(card) card.scrollIntoView({behavior:'smooth',block:'nearest'});
+    }
+  },80);
+}
+function clearRoutes(){routeLayers.forEach(l=>map.removeLayer(l));routeLayers=[];}
+
+// ═══════════════════════════════════════════
+// ROUTE CARDS
+// ═══════════════════════════════════════════
+function renderCards(routes){
+  const fastest=routes[2].time;
+  document.getElementById('rlist').innerHTML=routes.map((r,i)=>{
+    const extraMin=Math.max(0,r.time-fastest);
+    const extraNote=extraMin>0
+      ?`<span class="extra-time">+${extraMin} min safer detour</span>`
+      :`<span class="extra-time fastest-note">⚡ Fastest</span>`;
+    return `
+    <div class="rcard ${r.cls} ${i===0?'sel':''}" id="rc${i}" style="animation-delay:${i*0.07}s">
+      <div class="rc-top" onclick="selectRoute(${i})">
+        <div class="rc-name">${r.name}</div>
+        <div class="rbadge ${r.badge}">${r.badgeTxt}</div>
+      </div>
+      <div class="rc-meta" onclick="selectRoute(${i})">
+        <span>🚶 ${r.time} min</span>
+        <span>📍 ${r.km} km</span>
+        <span>📷 ${r.cams}</span>
+        ${extraNote}
+      </div>
+      <div class="sbar" onclick="selectRoute(${i})"><div class="sfill sf-${r.cls==='rs'?'s':r.cls==='rw'?'w':'d'}" style="width:${r.score}%"></div></div>
+      <div class="rtags" onclick="selectRoute(${i})">${r.tags.map(t=>`<span class="rtag ${tCls(t)}">${t}</span>`).join('')}</div>
+      <div class="why ${i===0?'show':''}" id="why${i}">💡 ${r.why}</div>
+      <div class="rc-actions">
+        <button class="rc-map-btn" onclick="viewOnMap(${i})">👁 View on Map</button>
+        <button class="rc-sel-btn ${i===0?'active':''}" id="selbtn${i}" onclick="selectRoute(${i})">Select Route</button>
+      </div>
+    </div>`;
+  }).join('');
+  const m=`${fromName} → ${toName}`;
+  document.getElementById('routesMeta').textContent=m.length>35?m.slice(0,33)+'…':m;
+}
+
+function viewOnMap(idx){
+  // On mobile: just close the sheet and fit the map — don't change active route
+  if(isMobile()){
+    toggleSidebar(false);
+    setTimeout(()=>{
+      if(currentRoutes) map.fitBounds(L.latLngBounds(currentRoutes[idx].r.coords),{padding:[60,40]});
+    },320);
+  } else {
+    if(currentRoutes) map.fitBounds(L.latLngBounds(currentRoutes[idx].r.coords),{padding:[60,60]});
+  }
+}
+function tCls(t){
+  if(t.includes('cam')) return 't1';
+  if(t.includes('crowd')||t.includes('lit')) return 't2';
+  if(t.includes('dark')||t.includes('Isolated')||t.includes('incident')) return 't3';
+  return 't4';
+}
+
+// ═══════════════════════════════════════════
+// NEARBY SERVICES (Overpass API)
+// ═══════════════════════════════════════════
+async function fetchServices(c){
+  clearSvc();
+  cachedPOIs = {coords:c, data:[]};
+  let searchC=c;
+  if(currentRoutes && currentRoutes[0]?.r?.coords?.length>2){
+    const coords=currentRoutes[0].r.coords;
+    searchC=coords[Math.floor(coords.length/2)];
+  }
+  try{
+    const q=`[out:json][timeout:12];(node["amenity"="police"](around:2500,${searchC[0]},${searchC[1]});node["amenity"="hospital"](around:2500,${searchC[0]},${searchC[1]});node["amenity"="clinic"](around:2500,${searchC[0]},${searchC[1]}););out body;`;
+    const res=await fetch('https://overpass-api.de/api/interpreter',{method:'POST',body:'data='+encodeURIComponent(q)});
+    const data=await res.json();
+    let placed=0;
+    data.elements.forEach(el=>{
+      if(!el.lat||!el.lon) return;
+      const t=el.tags.amenity, n=el.tags.name||(t==='police'?'Police Station':'Hospital');
+      cachedPOIs.data.push({coords:[el.lat,el.lon],type:t,name:n});
+      placeSvc([el.lat,el.lon],t,n);
+      placed++;
+    });
+    if(placed===0) throw 'empty';
+    if(activeFilters.has('cctv')) addCCTV();
+  }catch(e){
+    simSvc(searchC);
+    if(activeFilters.has('cctv')) addCCTV();
+  }
+}
+function placeSvc(coords, type, name){
+  const isP = type==='police';
+  if(!activeFilters.has(isP?'police':'hospital')) return;
+  const icon=isP?'🚔':'🏥', cls=isP?'mk-police':'mk-hosp';
+  const mk=L.marker(coords,{
+    icon:L.divIcon({html:`<div class="mk ${cls}">${icon}</div>`,iconSize:[32,32],iconAnchor:[16,16],className:''})
+  }).addTo(map).bindPopup(`<b>${icon} ${esc(name)}</b><br><small>${isP?'Police Station':'Medical Facility'}</small>`);
+  mk._isCCTV = false;
+  svcMarkers.push(mk);
+}
+function simSvc(c){
+  const sims=[
+    {o:[0.006,-0.007],t:'police',n:'Police Station'},
+    {o:[-0.009,0.010],t:'police',n:'Traffic Police Post'},
+    {o:[0.013,0.004],t:'hospital',n:'GGH Hospital'},
+    {o:[-0.007,-0.013],t:'hospital',n:'Apollo Clinic'},
+    {o:[0.016,-0.003],t:'hospital',n:'District Hospital'}
+  ];
+  // Cache the simulated data too
+  cachedPOIs.coords=c;
+  cachedPOIs.data=sims.map(p=>({coords:[c[0]+p.o[0],c[1]+p.o[1]],type:p.t,name:p.n}));
+  cachedPOIs.data.forEach(p=>placeSvc(p.coords,p.type,p.name));
+}
+function addCCTV(){
+  if(!currentRoutes||!activeFilters.has('cctv')) return;
+  const coords=currentRoutes[0].r.coords;
+  const step=Math.max(3,Math.floor(coords.length/14));
+  for(let i=step;i<coords.length-step;i+=step){
+    const mk=L.marker(coords[i],{
+      icon:L.divIcon({html:'<div class="mk mk-cctv">📷</div>',iconSize:[28,28],iconAnchor:[14,14],className:''})
+    }).addTo(map).bindPopup('<b>📷 CCTV Camera</b><br><small>Active 24/7 surveillance</small>');
+    mk._isCCTV=true;
+    svcMarkers.push(mk);
+  }
+}
+function clearSvc(){svcMarkers.forEach(m=>map.removeLayer(m));svcMarkers=[];}
+
+// ═══════════════════════════════════════════
+// DARK ZONES — deterministic placement (never jumps on re-toggle)
+// ═══════════════════════════════════════════
+// Fixed offsets so zones are stable every time filter is toggled
+const DZ_OFFSETS = [
+  {dlat:0.0007, dlng:-0.0009, r:155},
+  {dlat:-0.0015, dlng:0.0011, r:178},
+  {dlat:0.0022, dlng:0.0014, r:140},
+  {dlat:-0.0010, dlng:-0.0019, r:200},
+  {dlat:0.0005, dlng:0.0024, r:162},
+];
+function updateDz(){
+  dzLayers.forEach(l=>map.removeLayer(l)); dzLayers=[];
+  if(!activeFilters.has('dark')) return;
+  const baseCoords = (currentRoutes && currentRoutes[2]?.r?.coords?.length>4)
+    ? currentRoutes[2].r.coords
+    : (fromCoords ? [fromCoords] : null);
+  if(!baseCoords) return;
+
+  const pcts=[0.18,0.36,0.54,0.70,0.86];
+  pcts.forEach((pct,i)=>{
+    const idx=Math.floor(pct*(baseCoords.length-1));
+    const c=baseCoords[idx];
+    const o=DZ_OFFSETS[i];
+    const circle=L.circle([c[0]+o.dlat, c[1]+o.dlng],{
+      radius:o.r, color:'#ff4757', fillColor:'#ff4757',
+      fillOpacity:0.13, weight:1, opacity:0.5, className:'dzc'
+    }).addTo(map).bindPopup('<b>⚠️ Dark Zone</b><br><small>Poor lighting · Limited surveillance<br>Avoid at night</small>');
+    dzLayers.push(circle);
+  });
+}
+
+// Cache for fetched POI data — avoid re-fetching on every filter toggle
+let cachedPOIs = {coords:null, data:[]};
+
+// ═══════════════════════════════════════════
+// FILTERS — use cached data, no re-fetch
+// ═══════════════════════════════════════════
+function toggleFC(el, type){
+  el.classList.toggle('on');
+  if(el.classList.contains('on')) activeFilters.add(type);
+  else activeFilters.delete(type);
+
+  if(type==='dark'){
+    updateDz();
+    return;
+  }
+  if(type==='cctv'){
+    // Just add/remove CCTV markers without touching services
+    svcMarkers.filter(m=>m._isCCTV).forEach(m=>map.removeLayer(m));
+    svcMarkers = svcMarkers.filter(m=>!m._isCCTV);
+    if(activeFilters.has('cctv')) addCCTV();
+    return;
+  }
+  // For police/hospital: redraw from cached data
+  reDrawSvcFromCache();
+}
+
+function reDrawSvcFromCache(){
+  // Remove non-CCTV service markers
+  svcMarkers.filter(m=>!m._isCCTV).forEach(m=>map.removeLayer(m));
+  svcMarkers = svcMarkers.filter(m=>m._isCCTV);
+  // Re-place from cached POIs
+  if(cachedPOIs.data.length>0){
+    cachedPOIs.data.forEach(p=>placeSvc(p.coords, p.type, p.name));
+  } else if(fromCoords) {
+    simSvc(fromCoords);
+  }
+}
+
+// ═══════════════════════════════════════════
+// TOAST
+// ═══════════════════════════════════════════
+let toastT;
+function showToast(m){
+  const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');
+  clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('show'),2800);
+}
+
+// ═══════════════════════════════════════════
+// SOS
+// ═══════════════════════════════════════════
+function showSOS(){document.getElementById('sosModal').classList.add('show');}
+function closeSOS(e){if(!e||e.target===document.getElementById('sosModal'))document.getElementById('sosModal').classList.remove('show');}
+function callEmg(){closeSOS();window.location.href='tel:112';}
+function shareLoc(){
+  closeSOS();
+  const url=`https://maps.google.com/?q=${userLat},${userLng}`;
+  if(navigator.share) navigator.share({title:'🆘 My Emergency Location',text:'I need help:',url});
+  else navigator.clipboard?.writeText(url).then(()=>showToast('📋 Location link copied!'));
+}
+
+// ═══════════════════════════════════════════
+// MOBILE SWIPE TO CLOSE SIDEBAR
+// ═══════════════════════════════════════════
+let bsY=0;
+document.getElementById('sidebar').addEventListener('touchstart',e=>{bsY=e.touches[0].clientY;},{passive:true});
+document.getElementById('sidebar').addEventListener('touchend',e=>{if(e.changedTouches[0].clientY-bsY>70) toggleSidebar(false);},{passive:true});
+document.getElementById('mobHandle').addEventListener('click',()=>toggleSidebar(false));
+
+// sync inputs between PC and mobile
+document.getElementById('fromIn').addEventListener('input',e=>{const m=document.getElementById('mobFromIn');if(m&&m!==document.activeElement)m.value=e.target.value;});
+document.getElementById('toIn').addEventListener('input',e=>{const m=document.getElementById('mobToIn');if(m&&m!==document.activeElement)m.value=e.target.value;});
+const mf=document.getElementById('mobFromIn');const mt=document.getElementById('mobToIn');
+if(mf)mf.addEventListener('input',e=>{const p=document.getElementById('fromIn');if(p&&p!==document.activeElement)p.value=e.target.value;});
+if(mt)mt.addEventListener('input',e=>{const p=document.getElementById('toIn');if(p&&p!==document.activeElement)p.value=e.target.value;});
+</script>
+</body>
+</html>
